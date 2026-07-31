@@ -9,6 +9,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import analysisRoutes from './routes/analysisRoutes.js';
+import { globalErrorHandler } from './utils/errorHandler.js';
 
 // ----------------------------------------------------------------------------
 // CONFIGURATION
@@ -73,7 +75,8 @@ app.get('/', (req, res) => {
     status: 'running',
     endpoints: {
       health: 'GET /health',
-      analyze: 'POST /api/analysis/analyze (coming soon)',
+      analysisInfo: 'GET /api/analysis',
+      analyze: 'POST /api/analysis/analyze',
     },
   });
 });
@@ -93,6 +96,13 @@ app.get('/health', (req, res) => {
   });
 });
 
+/**
+ * Analysis Routes
+ * Mounts all /api/analysis/* endpoints (image, text, video analysis).
+ * See src/routes/analysisRoutes.js for the individual route definitions.
+ */
+app.use('/api/analysis', analysisRoutes);
+
 // ----------------------------------------------------------------------------
 // ERROR HANDLING
 // ----------------------------------------------------------------------------
@@ -111,19 +121,12 @@ app.use((req, res) => {
 
 /**
  * Global Error Handler
- * Catches errors thrown/passed via next(err) anywhere in the app.
+ * Catches errors thrown/passed via next(err) anywhere in the app
+ * (including ValidationError and AIServiceError from utils/errorHandler.js).
  * Must be registered LAST, and must have exactly 4 arguments so
  * Express recognizes it as an error-handling middleware.
  */
-app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err.stack || err);
-
-  res.status(err.status || 500).json({
-    status: 'error',
-    message: err.message || 'Internal Server Error',
-    ...(NODE_ENV === 'development' && { stack: err.stack }),
-  });
-});
+app.use(globalErrorHandler);
 
 // ----------------------------------------------------------------------------
 // START SERVER
