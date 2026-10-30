@@ -86,10 +86,12 @@ export default function ProcessingPage() {
         aria-hidden="true"
       />
       <h1 className="mt-6 text-lg font-semibold text-stone-900">
-        Sending your advertisement
+        Analysing your advertisement
       </h1>
-      <p className="mt-2 text-sm text-stone-600">
-        Uploading and validating the file with the MindLens server.
+      <p className="mt-2 max-w-sm text-sm leading-relaxed text-stone-600">
+        Gemini is reading the advertisement and checking which persuasive
+        techniques it can point to evidence for. This usually takes a few
+        seconds; the free tier can be slower when it is busy.
       </p>
       <p className="mt-4 text-xs tabular-nums text-stone-400">
         {elapsed}s elapsed

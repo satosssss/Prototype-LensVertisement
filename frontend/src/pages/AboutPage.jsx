@@ -7,7 +7,11 @@ const SECTIONS = [
   },
   {
     heading: 'Methodology',
-    body: 'An advertisement is uploaded as an image or text. The server validates and accepts it, then (from Milestone 2) sends it to a multimodal Gemini model that returns a structured list of techniques with the evidence behind each one. A separate Psychology & Media Literacy Engine, written by this team, maps those techniques to established concepts and generates the educational explanations and reflection questions. The AI identifies; our engine interprets.',
+    body: 'An advertisement is uploaded as an image or text. The server validates it, then sends it to the Gemini API with a JSON schema attached, so the reply is constrained to a fixed shape instead of free-form prose. That reply is re-checked on our server before anything is displayed: a technique with no evidence taken from the ad is dropped, a confidence value the model did not actually state is never invented, and a fixed set of limitations is always attached. The AI identifies what it can point at; our code decides what is allowed through.',
+  },
+  {
+    heading: 'Cost and data',
+    body: 'MindLens runs entirely on the Gemini free tier, so operating it costs nothing. That comes with two consequences we would rather state than hide. Requests are rate-limited per project, so a busy moment can return "quota reached — try again shortly". And Google states that content submitted on the free tier may be used to improve its products, unlike the paid tier. Please do not upload advertisements containing personal information about real people.',
   },
   {
     heading: 'What is measured, and what is inferred',
