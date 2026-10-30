@@ -10,7 +10,7 @@
 /**
  * ValidationError
  * Thrown when incoming request data fails validation
- * (e.g. missing "type", missing content/text, unsupported analysis type).
+ * (e.g. missing "type", missing text, wrong file type).
  * Maps to HTTP 400 Bad Request.
  */
 export class ValidationError extends Error {
@@ -22,6 +22,36 @@ export class ValidationError extends Error {
     super(message);
     this.name = 'ValidationError';
     this.status = 400;
+    this.details = details;
+  }
+}
+
+/**
+ * PayloadTooLargeError
+ * Thrown when an uploaded file or text body exceeds the configured limit.
+ * Maps to HTTP 413 Payload Too Large.
+ */
+export class PayloadTooLargeError extends Error {
+  constructor(message, details = null) {
+    super(message);
+    this.name = 'PayloadTooLargeError';
+    this.status = 413;
+    this.details = details;
+  }
+}
+
+/**
+ * NotSupportedError
+ * Thrown for input shapes the API recognises but does not support yet
+ * (currently: video advertisements).
+ * Maps to HTTP 501 Not Implemented — accurate, rather than pretending to
+ * analyse something we cannot.
+ */
+export class NotSupportedError extends Error {
+  constructor(message, details = null) {
+    super(message);
+    this.name = 'NotSupportedError';
+    this.status = 501;
     this.details = details;
   }
 }
@@ -47,7 +77,7 @@ export class AIServiceError extends Error {
 
 /**
  * NotFoundError
- * Thrown when a requested resource/route/analysis type doesn't exist.
+ * Thrown when a requested resource/route doesn't exist.
  * Maps to HTTP 404 Not Found.
  */
 export class NotFoundError extends Error {
@@ -60,16 +90,53 @@ export class NotFoundError extends Error {
 }
 
 // ----------------------------------------------------------------------------
+// THIRD-PARTY ERROR NORMALISATION
+// ----------------------------------------------------------------------------
+
+/**
+ * Translate errors raised by libraries (currently Multer) into our own error
+ * classes so the client always receives the same JSON shape.
+ *
+ * @param {Error & {code?: string}} err
+ * @returns {Error} a MindLens error, or the original error if unrecognised
+ */
+const normaliseError = (err) => {
+  // Multer rejects oversized files with code LIMIT_FILE_SIZE.
+  if (err.name === 'MulterError') {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return new PayloadTooLargeError(
+        'The uploaded file is too large.',
+        { field: err.field, code: err.code }
+      );
+    }
+    return new ValidationError(`Upload rejected: ${err.message}`, {
+      field: err.field,
+      code: err.code,
+    });
+  }
+
+  // express.json()/urlencoded() reject bodies over the configured limit.
+  if (err.type === 'entity.too.large') {
+    return new PayloadTooLargeError('The request body is too large.');
+  }
+
+  // Malformed JSON from the client.
+  if (err.type === 'entity.parse.failed') {
+    return new ValidationError('The request body is not valid JSON.');
+  }
+
+  return err;
+};
+
+// ----------------------------------------------------------------------------
 // GLOBAL ERROR HANDLER MIDDLEWARE
 // ----------------------------------------------------------------------------
 
 /**
  * globalErrorHandler
  * Express error-handling middleware (must have 4 args so Express
- * recognizes it as such). Catches errors passed via next(err) or thrown
- * inside async route handlers wrapped with try/catch.
+ * recognises it as such). Produces a consistent JSON error shape:
  *
- * Produces a consistent JSON error shape across the whole API:
  * {
  *   status: "error",
  *   error: "ValidationError",
@@ -84,28 +151,29 @@ export class NotFoundError extends Error {
  * @param {import('express').NextFunction} next
  */
 export const globalErrorHandler = (err, req, res, next) => {
-  const status = err.status || 500;
-  const NODE_ENV = process.env.NODE_ENV || 'development';
+  const normalised = normaliseError(err);
+  const status = normalised.status || 500;
 
-  console.error(`❌ [${err.name || 'Error'}] ${err.message}`);
-  if (NODE_ENV === 'development' && err.stack) {
-    console.error(err.stack);
+  console.error(`❌ [${normalised.name || 'Error'}] ${normalised.message}`);
+
+  // Stack traces are a development aid only — never leak internals in production.
+  if (status >= 500 && process.env.NODE_ENV === 'development' && normalised.stack) {
+    console.error(normalised.stack);
   }
 
   res.status(status).json({
     status: 'error',
-    error: err.name || 'Error',
-    message: err.message || 'Internal Server Error',
-    details: err.details || null,
-    ...(NODE_ENV === 'development' && { stack: err.stack }),
+    error: normalised.name || 'Error',
+    message: normalised.message || 'Internal Server Error',
+    details: normalised.details || null,
+    ...(process.env.NODE_ENV === 'development' && { stack: normalised.stack }),
   });
 };
 
 /**
  * asyncHandler
- * Small wrapper to avoid repetitive try/catch in async Express route
- * handlers. Catches rejected promises and forwards them to next(),
- * so they land in globalErrorHandler.
+ * Wrapper that forwards rejected promises to next(), so async controllers
+ * don't each need their own try/catch.
  *
  * Usage: router.post('/x', asyncHandler(async (req, res) => {...}))
  *

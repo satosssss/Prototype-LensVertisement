@@ -1,145 +1,132 @@
 // ============================================================================
 // Analysis Controller
-// Handles incoming analysis requests (image, text, video) and delegates
-// to the appropriate handler. Gemini integration is stubbed for now and
-// will be wired up in Task 1.3 (GeminiService).
+// Handles POST /api/analysis/analyze.
+//
+// CURRENT STATE (Milestone 1): the upload → validation → response pipeline is
+// real and complete. The AI reasoning is NOT — Gemini is wired up in
+// Milestone 2. Every response therefore declares `analysisStatus:
+// "not_analyzed"` so the frontend can never mistake a pipeline check for an
+// actual analysis.
+//
+// This file only orchestrates: it validates nothing (middleware does that) and
+// interprets nothing (the Psychology Engine will do that in Milestone 3).
 // ============================================================================
 
-import { ValidationError } from '../utils/errorHandler.js';
+import { randomUUID } from 'node:crypto';
 
-// ----------------------------------------------------------------------------
-// PLACEHOLDER — Task 1.3 will replace this with a real import:
-// import { GeminiService } from '../services/geminiService.js';
-// ----------------------------------------------------------------------------
+/** Notice attached to every Milestone 1 response. */
+const PENDING_NOTICE =
+  'Upload received and validated. Persuasion analysis is not connected yet — ' +
+  'the AI analysis step is implemented in Milestone 2.';
 
-/**
- * AnalysisController
- * Groups together all the logic for handling /api/analysis/* requests.
- * Each analysis type (image, text, video) has its own dedicated handler
- * method so the logic stays readable as Gemini integration grows.
- */
 class AnalysisController {
   /**
    * analyze
-   * Main entry point for POST /api/analysis/analyze.
-   * Reads the validated "type" field and routes the request to the
-   * correct type-specific handler.
-   *
-   * Validation middleware (validateAnalysisRequest) has already run by
-   * the time this executes, so `type` is guaranteed to be one of
-   * "image" | "text" | "video".
+   * Entry point for POST /api/analysis/analyze.
+   * Dispatches to a type-specific handler. Validation middleware has already
+   * guaranteed `type` is one of ACTIVE_TYPES.
    *
    * @param {import('express').Request} req
    * @param {import('express').Response} res
    * @param {import('express').NextFunction} next
    */
   async analyze(req, res, next) {
+    const startedAt = Date.now();
+    const { type } = req.body;
+
     try {
-      const { type } = req.body;
+      console.log(`🔍 Analysis request — type: "${type}"`);
 
-      console.log(`🔍 Received analysis request — type: "${type}"`);
-
-      let result;
-
-      switch (type) {
-        case 'image':
-          result = await this.handleImageAnalysis(req.body);
-          break;
-        case 'text':
-          result = await this.handleTextAnalysis(req.body);
-          break;
-        case 'video':
-          result = await this.handleVideoAnalysis(req.body);
-          break;
-        default:
-          // Should never hit this because validation middleware already
-          // checked "type", but guarded here for safety.
-          throw new ValidationError(`Unsupported analysis type: "${type}"`);
-      }
-
-      console.log(`✅ Analysis complete — type: "${type}"`);
+      const result =
+        type === 'image'
+          ? this.handleImageAnalysis(req.file)
+          : this.handleTextAnalysis(req.body.text);
 
       res.status(200).json({
         status: 'success',
         type,
         result,
+        meta: {
+          requestId: randomUUID(),
+          durationMs: Date.now() - startedAt,
+          processedAt: new Date().toISOString(),
+        },
       });
+
+      console.log(`✅ Request handled in ${Date.now() - startedAt}ms`);
     } catch (err) {
-      // Forward to the global error handler
       next(err);
     }
   }
 
   /**
    * handleImageAnalysis
-   * Processes an image analysis request.
-   * TODO (Task 1.3): send `content` (base64 image or URL) to GeminiService
-   * for media-literacy analysis (manipulation detection, claims, etc.)
+   * Describes the uploaded image without interpreting it.
+   * TODO (Milestone 2): pass `file.buffer` + `file.mimetype` to GeminiService.
    *
-   * @param {object} body - validated request body
-   * @param {string} body.content - base64-encoded image or image URL
-   * @returns {Promise<object>} structured analysis result (placeholder)
+   * @param {Express.Multer.File} file - in-memory upload from multer
+   * @returns {object} structured result
    */
-  async handleImageAnalysis({ content }) {
-    console.log('🖼️  Processing image analysis...');
-    console.log(`   Content length: ${content?.length ?? 0} chars`);
+  handleImageAnalysis(file) {
+    console.log(
+      `🖼️  Image received — ${file.originalname} (${file.mimetype}, ${file.size} bytes)`
+    );
 
-    // PLACEHOLDER — replace with: await GeminiService.analyzeImage(content)
     return {
       analysisType: 'image',
-      summary: 'Image analysis placeholder — Gemini integration pending (Task 1.3)',
-      flags: [],
-      confidence: null,
+      analysisStatus: 'not_analyzed',
+      notice: PENDING_NOTICE,
+
+      // What the request visibly contained — facts, not interpretation.
+      input: {
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+        sizeKb: Number((file.size / 1024).toFixed(1)),
+      },
+
+      // Filled in by later milestones. Kept present and empty rather than
+      // omitted, so the frontend has one stable shape to render.
+      techniques: [],
+      cognitiveImpact: null,
+      mediaLiteracy: null,
+      criticalThinkingQuestions: [],
     };
   }
 
   /**
    * handleTextAnalysis
-   * Processes a text advertisement analysis request.
-   * TODO (Task 1.3): send `text` to GeminiService for media-literacy
-   * analysis (persuasion techniques, emotional manipulation, claims, etc.)
+   * Describes the submitted text without interpreting it.
+   * TODO (Milestone 2): pass the text to GeminiService.
    *
-   * @param {object} body - validated request body
-   * @param {string} body.text - advertisement or media text to analyze
-   * @returns {Promise<object>} structured analysis result (placeholder)
+   * @param {string} text - validated advertisement text
+   * @returns {object} structured result
    */
-  async handleTextAnalysis({ text }) {
-    console.log('📝 Processing text analysis...');
-    console.log(`   Text length: ${text?.length ?? 0} chars`);
+  handleTextAnalysis(text) {
+    const trimmed = text.trim();
+    const words = trimmed.split(/\s+/).filter(Boolean).length;
 
-    // PLACEHOLDER — replace with: await GeminiService.analyzeText(text)
+    console.log(`📝 Text received — ${text.length} chars, ${words} words`);
+
     return {
       analysisType: 'text',
-      summary: 'Text analysis placeholder — Gemini integration pending (Task 1.3)',
-      flags: [],
-      confidence: null,
-    };
-  }
+      analysisStatus: 'not_analyzed',
+      notice: PENDING_NOTICE,
 
-  /**
-   * handleVideoAnalysis
-   * Processes a video analysis request.
-   * TODO (Task 1.3): send `content` (base64 video, URL, or frame set) to
-   * GeminiService for media-literacy analysis.
-   *
-   * @param {object} body - validated request body
-   * @param {string} body.content - base64-encoded video or video URL
-   * @returns {Promise<object>} structured analysis result (placeholder)
-   */
-  async handleVideoAnalysis({ content }) {
-    console.log('🎬 Processing video analysis...');
-    console.log(`   Content length: ${content?.length ?? 0} chars`);
+      input: {
+        characters: text.length,
+        words,
+        // Short preview so the user can confirm we received the right text.
+        preview: trimmed.length > 160 ? `${trimmed.slice(0, 160)}…` : trimmed,
+      },
 
-    // PLACEHOLDER — replace with: await GeminiService.analyzeVideo(content)
-    return {
-      analysisType: 'video',
-      summary: 'Video analysis placeholder — Gemini integration pending (Task 1.3)',
-      flags: [],
-      confidence: null,
+      techniques: [],
+      cognitiveImpact: null,
+      mediaLiteracy: null,
+      criticalThinkingQuestions: [],
     };
   }
 }
 
-// Export a single shared instance (controllers are stateless here,
-// so one instance is enough for the whole app)
+// Controllers are stateless, so a single shared instance is enough.
 export default new AnalysisController();

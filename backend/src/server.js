@@ -1,63 +1,72 @@
 // ============================================================================
 // MindLens API Server
 // AI-powered Media Literacy Analyzer — UNESCO Youth Hackathon 2026
+//
+// Responsibility: assemble the Express app (middleware + routes + error
+// handling) and start listening. Business logic lives in controllers/services.
 // ============================================================================
 
-// ----------------------------------------------------------------------------
-// IMPORTS
-// ----------------------------------------------------------------------------
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+
+import { env } from './config/env.js';
 import analysisRoutes from './routes/analysisRoutes.js';
 import { globalErrorHandler } from './utils/errorHandler.js';
 
-// ----------------------------------------------------------------------------
-// CONFIGURATION
-// ----------------------------------------------------------------------------
-
-// Load environment variables from .env into process.env
-dotenv.config();
-
-// Server port — falls back to 5000 if not defined in the environment
-const PORT = process.env.PORT || 5000;
-
-// Current environment (development | production | test)
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Allowed origin for CORS — the frontend URL (React app)
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-// Create the Express application instance
 const app = express();
+
+// ----------------------------------------------------------------------------
+// APP-LEVEL SETTINGS
+// ----------------------------------------------------------------------------
+
+// Don't advertise the framework in response headers.
+app.disable('x-powered-by');
+
+// Render/Vercel sit behind a proxy; trust its X-Forwarded-* headers so
+// req.ip and req.protocol are accurate in production.
+app.set('trust proxy', 1);
 
 // ----------------------------------------------------------------------------
 // MIDDLEWARE
 // ----------------------------------------------------------------------------
 
 /**
- * CORS Middleware
- * Restricts cross-origin requests to the configured frontend URL only.
- * This prevents unauthorized domains from calling the API directly
- * from a browser context.
+ * CORS
+ * Only the configured frontend origin(s) may call this API from a browser.
+ * Requests with no Origin header (curl, Postman, server-to-server, health
+ * checks) are allowed — CORS is a browser mechanism, not authentication.
+ *
+ * credentials: false — this API uses no cookies or sessions. Enabling it
+ * without a need only widens the attack surface.
  */
 app.use(
   cors({
-    origin: FRONTEND_URL,
-    credentials: true,
+    origin(origin, callback) {
+      if (!origin || env.frontendUrls.includes(origin)) {
+        return callback(null, true);
+      }
+
+      const err = new Error(
+        `Origin "${origin}" is not allowed. Allowed: ${env.frontendUrls.join(', ')}`
+      );
+      err.name = 'CorsError';
+      err.status = 403;
+      return callback(err);
+    },
+    credentials: false,
   })
 );
 
 /**
  * Body Parsers
- * - express.json(): parses incoming JSON payloads (e.g. article text,
- *   analysis requests). Limit raised to 50mb to comfortably support
- *   large text blobs, base64 images, or transcripts submitted for analysis.
- * - express.urlencoded(): parses URL-encoded form submissions.
- *   extended: true allows rich objects/arrays to be encoded.
+ * - express.json(): JSON text advertisements. 1mb is generous for text.
+ * - express.urlencoded(): traditional form posts.
+ *
+ * Multipart file uploads are NOT handled here — multer parses those in the
+ * analysis route, where the size limit is enforced per-file.
  */
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // ----------------------------------------------------------------------------
 // ROUTES
@@ -65,8 +74,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 /**
  * GET /
- * Root endpoint — basic API metadata and a map of available endpoints.
- * Useful as a quick sanity check that the server is deployed and reachable.
+ * API metadata + endpoint map. Quick sanity check that the server is live.
  */
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -83,23 +91,19 @@ app.get('/', (req, res) => {
 
 /**
  * GET /health
- * Health check endpoint used by uptime monitors, load balancers, and
- * deployment platforms (e.g. Render) to verify the service is alive.
- *
- * @returns {object} status, ISO timestamp, and process uptime in seconds
+ * Liveness probe for uptime monitors and deployment platforms (Render).
  */
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Number(process.uptime().toFixed(3)),
+    environment: env.nodeEnv,
   });
 });
 
 /**
- * Analysis Routes
- * Mounts all /api/analysis/* endpoints (image, text, video analysis).
- * See src/routes/analysisRoutes.js for the individual route definitions.
+ * Analysis Routes — /api/analysis/*
  */
 app.use('/api/analysis', analysisRoutes);
 
@@ -108,23 +112,21 @@ app.use('/api/analysis', analysisRoutes);
 // ----------------------------------------------------------------------------
 
 /**
- * 404 Handler
- * Catches any request that didn't match a defined route above.
+ * 404 Handler — catches anything that matched no route above.
  * Must be registered AFTER all valid routes.
  */
 app.use((req, res) => {
   res.status(404).json({
     status: 'error',
+    error: 'NotFoundError',
     message: `Route not found: ${req.method} ${req.originalUrl}`,
+    details: null,
   });
 });
 
 /**
- * Global Error Handler
- * Catches errors thrown/passed via next(err) anywhere in the app
- * (including ValidationError and AIServiceError from utils/errorHandler.js).
- * Must be registered LAST, and must have exactly 4 arguments so
- * Express recognizes it as an error-handling middleware.
+ * Global Error Handler — must be LAST, and must have exactly 4 arguments
+ * so Express recognises it as error-handling middleware.
  */
 app.use(globalErrorHandler);
 
@@ -132,13 +134,17 @@ app.use(globalErrorHandler);
 // START SERVER
 // ----------------------------------------------------------------------------
 
-app.listen(PORT, () => {
+app.listen(env.port, () => {
   console.log('🚀 MindLens API Server is running!');
-  console.log(`🌐 URL:          http://localhost:${PORT}`);
-  console.log(`❤️  Health check: http://localhost:${PORT}/health`);
-  console.log(`⚙️  Environment:  ${NODE_ENV}`);
-  console.log(`🔗 Allowed CORS origin: ${FRONTEND_URL}`);
+  console.log(`🌐 URL:            http://localhost:${env.port}`);
+  console.log(`❤️  Health check:   http://localhost:${env.port}/health`);
+  console.log(`⚙️  Environment:    ${env.nodeEnv}`);
+  console.log(`🔗 Allowed origins: ${env.frontendUrls.join(', ')}`);
+  console.log(`📦 Max upload:      ${(env.maxUploadBytes / 1024 / 1024).toFixed(1)} MB`);
+  console.log(
+    `🤖 Gemini:          ${env.geminiApiKey ? 'key present (Milestone 2)' : 'not configured (Milestone 2)'}`
+  );
 });
 
-// Export app for testing (e.g. with supertest + jest)
+// Export app for testing (e.g. supertest + jest)
 export default app;
