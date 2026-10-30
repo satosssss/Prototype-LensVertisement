@@ -76,6 +76,45 @@ export class AIServiceError extends Error {
 }
 
 /**
+ * AIRateLimitError
+ * Thrown when Gemini rejects a request because the free-tier quota for this
+ * project is exhausted.
+ *
+ * Deliberately 429, not 502. The distinction matters to the user: "we hit a
+ * limit, wait a minute" is actionable, while "the AI service failed" suggests
+ * a bug on our side. Free-tier limits reset, so this is a normal condition.
+ */
+export class AIRateLimitError extends Error {
+  /**
+   * @param {string} message
+   * @param {object} [details] - optional retry guidance
+   */
+  constructor(message, details = null) {
+    super(message);
+    this.name = 'AIRateLimitError';
+    this.status = 429;
+    this.details = details;
+  }
+}
+
+/**
+ * AITimeoutError
+ * Thrown when the Gemini request exceeds our configured deadline.
+ * Maps to HTTP 504 Gateway Timeout — we waited, upstream did not answer.
+ *
+ * Kept separate from AIServiceError so the UI can tell "try again, it was
+ * slow" apart from "this input made the model fail".
+ */
+export class AITimeoutError extends Error {
+  constructor(message, details = null) {
+    super(message);
+    this.name = 'AITimeoutError';
+    this.status = 504;
+    this.details = details;
+  }
+}
+
+/**
  * NotFoundError
  * Thrown when a requested resource/route doesn't exist.
  * Maps to HTTP 404 Not Found.

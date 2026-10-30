@@ -2,29 +2,35 @@
 // Analysis Controller
 // Handles POST /api/analysis/analyze.
 //
-// CURRENT STATE (Milestone 1): the upload → validation → response pipeline is
-// real and complete. The AI reasoning is NOT — Gemini is wired up in
-// Milestone 2. Every response therefore declares `analysisStatus:
-// "not_analyzed"` so the frontend can never mistake a pipeline check for an
-// actual analysis.
+// Pipeline: middleware validates the request → this file builds the input →
+// geminiService talks to Google → validateAIResponse re-checks the answer →
+// a single JSON response is assembled here.
 //
-// This file only orchestrates: it validates nothing (middleware does that) and
-// interprets nothing (the Psychology Engine will do that in Milestone 3).
+// The controller is still only an orchestrator: it validates nothing (middleware
+// does) and trusts nothing (the AI response is normalised before it is used).
+//
+// Milestone 2 status: the persuasion analysis is REAL. Every field under
+// `techniques`, `visualObservations`, `targetAudienceIndicators` and
+// `criticalThinkingQuestions` comes from Gemini; nothing is mocked, and
+// `analysisStatus: "analyzed"` is only ever set after validation succeeds.
+//
+// Milestone 3 will add the Psychology Engine (`cognitiveImpact`), which maps
+// techniques onto educational cognitive indicators. Until then that field is
+// explicitly null rather than absent, so the frontend has one stable shape.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto';
 
-/** Notice attached to every Milestone 1 response. */
-const PENDING_NOTICE =
-  'Upload received and validated. Persuasion analysis is not connected yet — ' +
-  'the AI analysis step is implemented in Milestone 2.';
+import { env } from '../config/env.js';
+import { analyze as analyzeWithGemini } from '../services/geminiService.js';
+import { validateAIResponse } from '../utils/validateAIResponse.js';
 
 class AnalysisController {
   /**
    * analyze
    * Entry point for POST /api/analysis/analyze.
-   * Dispatches to a type-specific handler. Validation middleware has already
-   * guaranteed `type` is one of ACTIVE_TYPES.
+   * Validation middleware has already guaranteed `type` is 'image' or 'text',
+   * and that the corresponding payload exists.
    *
    * @param {import('express').Request} req
    * @param {import('express').Response} res
@@ -39,8 +45,8 @@ class AnalysisController {
 
       const result =
         type === 'image'
-          ? this.handleImageAnalysis(req.file)
-          : this.handleTextAnalysis(req.body.text);
+          ? await this.handleImageAnalysis(req.file)
+          : await this.handleTextAnalysis(req.body.text);
 
       res.status(200).json({
         status: 'success',
@@ -53,7 +59,10 @@ class AnalysisController {
         },
       });
 
-      console.log(`✅ Request handled in ${Date.now() - startedAt}ms`);
+      console.log(
+        `✅ Analysis complete in ${Date.now() - startedAt}ms — ` +
+          `${result.techniques.length} technique(s)`
+      );
     } catch (err) {
       next(err);
     }
@@ -61,23 +70,34 @@ class AnalysisController {
 
   /**
    * handleImageAnalysis
-   * Describes the uploaded image without interpreting it.
-   * TODO (Milestone 2): pass `file.buffer` + `file.mimetype` to GeminiService.
+   * Sends the uploaded bytes to Gemini as an inline image, then validates the
+   * structured answer.
    *
    * @param {Express.Multer.File} file - in-memory upload from multer
-   * @returns {object} structured result
+   * @returns {Promise<object>} structured result
    */
-  handleImageAnalysis(file) {
+  async handleImageAnalysis(file) {
     console.log(
       `🖼️  Image received — ${file.originalname} (${file.mimetype}, ${file.size} bytes)`
     );
 
+    const ai = await analyzeWithGemini({
+      kind: 'image',
+      fileBuffer: file.buffer,
+      mimeType: file.mimetype,
+    });
+
+    const analysis = validateAIResponse(ai.text, {
+      kind: 'image',
+      model: ai.model,
+    });
+
     return {
       analysisType: 'image',
-      analysisStatus: 'not_analyzed',
-      notice: PENDING_NOTICE,
+      analysisStatus: 'analyzed',
 
-      // What the request visibly contained — facts, not interpretation.
+      // What the request visibly contained — facts about the upload, not
+      // about the ad's content.
       input: {
         originalName: file.originalname,
         mimeType: file.mimetype,
@@ -85,45 +105,80 @@ class AnalysisController {
         sizeKb: Number((file.size / 1024).toFixed(1)),
       },
 
-      // Filled in by later milestones. Kept present and empty rather than
-      // omitted, so the frontend has one stable shape to render.
-      techniques: [],
-      cognitiveImpact: null,
-      mediaLiteracy: null,
-      criticalThinkingQuestions: [],
+      ...this.buildAnalysisFields(analysis, ai),
+
+      cognitiveImpact: null, // Milestone 3
     };
   }
 
   /**
    * handleTextAnalysis
-   * Describes the submitted text without interpreting it.
-   * TODO (Milestone 2): pass the text to GeminiService.
+   * Sends the submitted advertisement text to Gemini, then validates the
+   * structured answer.
    *
    * @param {string} text - validated advertisement text
-   * @returns {object} structured result
+   * @returns {Promise<object>} structured result
    */
-  handleTextAnalysis(text) {
+  async handleTextAnalysis(text) {
     const trimmed = text.trim();
     const words = trimmed.split(/\s+/).filter(Boolean).length;
 
     console.log(`📝 Text received — ${text.length} chars, ${words} words`);
 
+    const ai = await analyzeWithGemini({ kind: 'text', text: trimmed });
+
+    const analysis = validateAIResponse(ai.text, {
+      kind: 'text',
+      model: ai.model,
+    });
+
     return {
       analysisType: 'text',
-      analysisStatus: 'not_analyzed',
-      notice: PENDING_NOTICE,
+      analysisStatus: 'analyzed',
 
       input: {
         characters: text.length,
         words,
-        // Short preview so the user can confirm we received the right text.
+        // Short preview so the user can confirm we analysed the right text.
         preview: trimmed.length > 160 ? `${trimmed.slice(0, 160)}…` : trimmed,
       },
 
-      techniques: [],
-      cognitiveImpact: null,
-      mediaLiteracy: null,
-      criticalThinkingQuestions: [],
+      ...this.buildAnalysisFields(analysis, ai),
+
+      cognitiveImpact: null, // Milestone 3
+    };
+  }
+
+  /**
+   * buildAnalysisFields
+   * The AI-derived half of the response, identical for both input types.
+   * Kept in one place so the two handlers cannot drift apart.
+   *
+   * @param {object} analysis - output of validateAIResponse
+   * @param {{ model: string, durationMs: number }} ai
+   * @returns {object}
+   */
+  buildAnalysisFields(analysis, ai) {
+    return {
+      adSummary: analysis.adSummary,
+      language: analysis.language,
+      extractedText: analysis.extractedText,
+      visualObservations: analysis.visualObservations,
+      techniques: analysis.techniques,
+      noTechniquesDetected: analysis.noTechniquesDetected,
+      targetAudienceIndicators: analysis.targetAudienceIndicators,
+      criticalThinkingQuestions: analysis.criticalThinkingQuestions,
+      limitations: analysis.limitations,
+
+      // Provenance. If someone asks "which model said this?", the answer is in
+      // the payload rather than buried in a log file.
+      ai: {
+        provider: 'Google Gemini',
+        model: ai.model,
+        configuredModel: env.geminiModel,
+        latencyMs: ai.durationMs,
+        tier: 'free',
+      },
     };
   }
 }

@@ -142,7 +142,11 @@ app.listen(env.port, () => {
   console.log(`🔗 Allowed origins: ${env.frontendUrls.join(', ')}`);
   console.log(`📦 Max upload:      ${(env.maxUploadBytes / 1024 / 1024).toFixed(1)} MB`);
   console.log(
-    `🤖 Gemini:          ${env.geminiApiKey ? 'key present (Milestone 2)' : 'not configured (Milestone 2)'}`
+    `🤖 Gemini:          ${
+      env.geminiApiKey
+        ? `${env.geminiModel} (free tier)`
+        : 'NOT CONFIGURED — add GEMINI_API_KEY to backend/.env'
+    }`
   );
 });
 

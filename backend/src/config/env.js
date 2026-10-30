@@ -45,10 +45,26 @@ export const env = {
   // Text advertisements are plain strings, so they get a much smaller cap.
   maxTextChars: 20_000,
 
-  // Gemini — unused until Milestone 2, but validated here so the AI service
-  // can fail fast with a clear message instead of a confusing SDK error.
+  // Gemini — free tier only. `gemini-3.8-flash` is the current stable Flash
+  // model and is the one model in the line-up whose input AND output are
+  // listed as "free of charge" on the pricing page. Do not switch this to
+  // `gemini-4-argon` (paid) without confirming the billing implications.
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+
+  // Hard deadline for one Gemini call. Vision requests on the free tier can
+  // queue, so this is generous, but it must exist: without it a stalled
+  // request would hold the user's browser open indefinitely.
+  geminiTimeoutMs: toInt(process.env.GEMINI_TIMEOUT_MS, 60_000),
+
+  // Optional thinking budget. Empty by default: some models reject levels
+  // they do not support, and failing a demo to save a second of latency is a
+  // bad trade. Set to MINIMAL / LOW / MEDIUM / HIGH to experiment.
+  geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || '').toUpperCase(),
+
+  // Free output tokens are still rate-limited by TPM, and a truncated JSON
+  // response is unusable, so this is a ceiling rather than a target.
+  geminiMaxOutputTokens: toInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 4096),
 };
 
 export default env;
