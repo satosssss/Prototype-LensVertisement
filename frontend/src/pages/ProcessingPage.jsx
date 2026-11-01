@@ -90,8 +90,9 @@ export default function ProcessingPage() {
       </h1>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-stone-600">
         Gemini is reading the advertisement and checking which persuasive
-        techniques it can point to evidence for. This usually takes a few
-        seconds; the free tier can be slower when it is busy.
+        techniques it can point to evidence for. On the free tier this usually
+        takes 60 to 90 seconds, and can be slower when Google is busy. Keep
+        this tab open.
       </p>
       <p className="mt-4 text-xs tabular-nums text-stone-400">
         {elapsed}s elapsed

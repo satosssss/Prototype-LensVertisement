@@ -240,10 +240,10 @@ Capability discovery — lists supported and deferred input types.
       "This describes features of the advertisement, not the reaction of any person to it. …",
       "MindLens has no access to the campaign's targeting data, audience measurements, or commercial results …"
     ],
-    "ai": { "provider": "Google Gemini", "model": "gemini-3.8-flash", "latencyMs": 4120, "tier": "free" },
+    "ai": { "provider": "Google Gemini", "model": "gemini-3.8-flash", "latencyMs": 98105, "tier": "free" },
     "cognitiveImpact": null
   },
-  "meta": { "requestId": "…", "durationMs": 4302, "processedAt": "…" }
+  "meta": { "requestId": "…", "durationMs": 98107, "processedAt": "…" }
 }
 ```
 
@@ -282,8 +282,8 @@ All errors share one shape:
 | `MAX_UPLOAD_MB` | `5` | Max advertisement image size |
 | `GEMINI_API_KEY` | *(empty)* | Gemini API key — never commit |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Must be a **free-tier** model |
-| `GEMINI_TIMEOUT_MS` | `60000` | Hard deadline for one AI call |
-| `GEMINI_THINKING_LEVEL` | *(empty)* | Optional: `MINIMAL`, `LOW`, `MEDIUM`, `HIGH` |
+| `GEMINI_TIMEOUT_MS` | `120000` | Hard deadline for one AI call |
+| `GEMINI_THINKING_LEVEL` | *(empty)* | Optional: `minimal`, `low`, `medium`, `high` (**lowercase only**) |
 | `GEMINI_MAX_OUTPUT_TOKENS` | `4096` | Ceiling on a single response |
 
 **frontend/.env**
@@ -309,6 +309,7 @@ Three properties of the free tier are handled in code rather than assumed away:
 | Per-project rate limits (RPM / RPD, reset midnight Pacific) | A `429` from Google becomes a `429` from our API with a plain-language message. The SDK's own retry loop is disabled per request, so one quota error means one request — not five |
 | No cost guarantee for paid-only models | `GEMINI_MODEL` defaults to the free model; switching to a paid model (`gemini-4-argon`) is a deliberate config change, not an accident |
 | Free-tier content may be used to improve Google's products | Documented in `.env.example` and on the About page; the UI asks users not to upload personal data. `store: false` is sent so Google does not retain the interaction for retrieval |
+| Free-tier capacity fluctuates | Measured latency for one text analysis ranged from **87 s to 98 s**, and Google intermittently returns `503 "high demand"`. A `503` gets its own plain-language message ("Gemini is busy right now…") and one retry; a call that overruns `GEMINI_TIMEOUT_MS` returns `504` and is **not** retried, because the budget is already spent |
 
 ### The trust boundary
 

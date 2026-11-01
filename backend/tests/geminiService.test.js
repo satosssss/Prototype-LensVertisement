@@ -55,10 +55,13 @@ const received = [];
 let server;
 let analyze;
 let AIRateLimitError;
+let AITimeoutError;
 
 /**
  * The next response the mock server should send.
- * @type {{ status: number, body: object }}
+ * `status: 'hang'` means "accept the request and never answer", which is how
+ * the timeout path is exercised.
+ * @type {{ status: number|'hang', body: object }}
  */
 let nextResponse = { status: 200, body: {} };
 
@@ -74,6 +77,9 @@ before(async () => {
         body: Buffer.concat(chunks).toString('utf8'),
       });
 
+      // Black hole: the caller must give up on its own deadline.
+      if (nextResponse.status === 'hang') return;
+
       res.writeHead(nextResponse.status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(nextResponse.body));
     });
@@ -86,13 +92,17 @@ before(async () => {
   // process.env once, at import time.
   process.env.GEMINI_API_KEY = 'test-key-not-real';
   process.env.GEMINI_MODEL = 'gemini-3.8-flash';
-  process.env.GEMINI_TIMEOUT_MS = '5000';
+  // Deliberately short so the timeout test does not stall the suite.
+  process.env.GEMINI_TIMEOUT_MS = '800';
+  // Deliberately UPPER CASE: the API only accepts lowercase, and config/env.js
+  // is responsible for normalising it.
+  process.env.GEMINI_THINKING_LEVEL = 'LOW';
 
   // Point the real SDK at our server instead of Google.
   setDefaultBaseUrls({ geminiUrl: `http://127.0.0.1:${port}` });
 
   ({ analyze } = await import('../src/services/geminiService.js'));
-  ({ AIRateLimitError } = await import('../src/utils/errorHandler.js'));
+  ({ AIRateLimitError, AITimeoutError } = await import('../src/utils/errorHandler.js'));
 });
 
 after(() => {
@@ -136,6 +146,10 @@ test('a text analysis sends a schema-constrained interactions request', async ()
   assert.equal(body.generation_config.max_output_tokens, 4096);
   assert.equal(body.store, false);
 
+  // GEMINI_THINKING_LEVEL=LOW must reach the wire as 'low'. Sending 'LOW'
+  // is rejected by the API with HTTP 400.
+  assert.equal(body.generation_config.thinking_level, 'low');
+
   // The ad text must survive inside the prompt markers.
   assert.ok(JSON.stringify(body.input).includes('ONLY 3 LEFT'));
   assert.ok(JSON.stringify(body.input).includes('BEGIN ADVERTISEMENT TEXT'));
@@ -178,4 +192,57 @@ test('a 429 becomes AIRateLimitError, not a generic upstream failure', async () 
 
   // Crucially: exactly one attempt. Retrying a quota error only burns more quota.
   assert.equal(received.length, 1);
+});
+
+test('a 503 becomes a "Gemini is busy" error that does not leak internals', async () => {
+  received.length = 0;
+  nextResponse = {
+    status: 503,
+    body: {
+      error: {
+        code: 503,
+        message: 'gemini-3.8-flash is currently experiencing high demand',
+        status: 'UNAVAILABLE',
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => analyze({ kind: 'text', text: 'test' }),
+    (err) => {
+      assert.equal(err.status, 502);
+      assert.equal(err.details.reason, 'model_overloaded');
+      assert.match(err.message, /busy right now/i);
+      // The upstream Google message is for our logs, not the browser.
+      assert.equal(err.details.upstream, undefined);
+      return true;
+    }
+  );
+});
+
+test('a call that overruns the deadline is a 504 timeout and is NOT retried', async () => {
+  received.length = 0;
+  nextResponse = { status: 'hang', body: {} };
+
+  const startedAt = Date.now();
+
+  await assert.rejects(
+    () => analyze({ kind: 'text', text: 'test' }),
+    (err) => {
+      // The SDK wraps our abort in a transport error whose `name` is not
+      // 'AbortError' — only its message mentions it. If that is missed, the
+      // timeout surfaces as a generic 502 AND gets retried.
+      assert.ok(err instanceof AITimeoutError);
+      assert.equal(err.status, 504);
+      assert.equal(err.details.reason, 'timeout');
+      return true;
+    }
+  );
+
+  // One request, one deadline. Retrying a timeout doubles the wait for the user.
+  assert.equal(received.length, 1);
+  assert.ok(
+    Date.now() - startedAt < 3_000,
+    'should give up at the configured deadline, not retry'
+  );
 });

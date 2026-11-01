@@ -81,12 +81,30 @@ const statusOf = (err) => {
 const messageOf = (err) => String(err?.message ?? err ?? 'Unknown error');
 
 /**
+ * True when a call was stopped by our own deadline rather than by Google.
+ *
+ * The SDK does NOT surface this as a clean `AbortError`: it wraps both our
+ * AbortController and its own `timeout` option in a transport error whose
+ * `name` is something else entirely and whose message reads
+ * "Request aborted by client: AbortError: This operation was aborted".
+ * Matching on `name` alone therefore misses it, which used to mean a timeout
+ * was mistaken for a transient network blip — retried (doubling the wait to
+ * 120 s) and then reported as a generic 502 instead of a 504.
+ */
+const isAbort = (err) => {
+  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return true;
+  if (err?.code === 'ABORT_ERR' || err?.code === 'ETIMEDOUT') return true;
+  return /\bAbortError\b|aborted by client|operation was aborted/i.test(messageOf(err));
+};
+
+/**
  * True for failures worth retrying: upstream 5xx and connection-level errors.
  * A 429 is deliberately NOT retryable — free-tier quotas reset on a schedule,
  * not in 1.5 seconds, so retrying only wastes the user's remaining quota.
+ * Neither is a timeout: the call already used its whole budget.
  */
 const isTransient = (err) => {
-  if (err?.name === 'AbortError') return false;
+  if (isAbort(err)) return false;
   const status = statusOf(err);
   return status === 0 || status >= 500;
 };
@@ -101,7 +119,7 @@ function translateError(err) {
     return err;
   }
 
-  if (err?.name === 'AbortError') {
+  if (isAbort(err)) {
     return new AITimeoutError(
       `The AI analysis took longer than ${Math.round(env.geminiTimeoutMs / 1000)} seconds and was stopped. Please try again.`,
       { reason: 'timeout' }
@@ -144,9 +162,18 @@ function translateError(err) {
     );
   }
 
+  // Google's own capacity message. Worth its own wording: it is temporary and
+  // the user's advertisement is not at fault.
+  if (status === 503) {
+    return new AIServiceError(
+      'Gemini is busy right now and did not accept the request. This is temporary — please try again in a few seconds.',
+      { reason: 'model_overloaded', upstreamStatus: status }
+    );
+  }
+
   return new AIServiceError(
     'The AI analysis service could not complete the request. Please try again.',
-    { reason: 'upstream_error', upstreamStatus: status, upstream }
+    { reason: 'upstream_error', upstreamStatus: status }
   );
 }
 

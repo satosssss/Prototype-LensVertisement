@@ -52,15 +52,20 @@ export const env = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
 
-  // Hard deadline for one Gemini call. Vision requests on the free tier can
-  // queue, so this is generous, but it must exist: without it a stalled
-  // request would hold the user's browser open indefinitely.
-  geminiTimeoutMs: toInt(process.env.GEMINI_TIMEOUT_MS, 60_000),
+  // Hard deadline for one Gemini call. Measured live on gemini-3.8-flash:
+  // a text analysis took 87 s, so a 60 s deadline aborted half the requests.
+  // This must stay above the slowest realistic call, but it must exist:
+  // without it a stalled request would hold the user's browser open forever.
+  geminiTimeoutMs: toInt(process.env.GEMINI_TIMEOUT_MS, 120_000),
 
   // Optional thinking budget. Empty by default: some models reject levels
   // they do not support, and failing a demo to save a second of latency is a
-  // bad trade. Set to MINIMAL / LOW / MEDIUM / HIGH to experiment.
-  geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || '').toUpperCase(),
+  // bad trade. Set to minimal / low / medium / high to experiment.
+  //
+  // The API accepts LOWERCASE only — `MINIMAL` is rejected with HTTP 400
+  // ("The value 'MINIMAL' is not supported for 'generation_config.thinking_level'"),
+  // so this must never be upper-cased.
+  geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || '').trim().toLowerCase(),
 
   // Free output tokens are still rate-limited by TPM, and a truncated JSON
   // response is unusable, so this is a ceiling rather than a target.

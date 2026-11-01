@@ -13,6 +13,16 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
 /**
+ * How long we wait for the backend before giving up.
+ *
+ * Gemini on the free tier is slow — a measured text analysis took ~87 s — and
+ * the backend's own deadline is 120 s. This sits above that so the backend's
+ * clearer error wins, but still stops the UI hanging forever if the request
+ * dies somewhere in between (proxy, sleeping dyno, dropped connection).
+ */
+const REQUEST_TIMEOUT_MS = 150_000;
+
+/**
  * ApiError
  * Carries the HTTP status and the backend's `details` payload so the UI can
  * show a useful message instead of "Something went wrong".
@@ -56,12 +66,26 @@ export async function analyzeAdvertisement({ type, file, text }) {
   }
 
   let response;
+
+  // Without this, a stalled request leaves the user staring at a spinner with
+  // no way out. `AbortSignal.timeout` is supported by every browser Vite 8
+  // targets.
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
   try {
     response = await fetch(`${API_BASE_URL}/api/analysis/analyze`, {
       method: 'POST',
       body: formData,
+      signal,
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+      throw new ApiError(
+        'The analysis took too long and was cancelled. Gemini may be busy — please try again.',
+        0
+      );
+    }
+
     // fetch only rejects on network-level failure (server down, DNS, CORS).
     throw new ApiError(
       'Could not reach the MindLens server. Check that the backend is running, then try again.',
