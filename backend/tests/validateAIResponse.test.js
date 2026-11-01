@@ -52,6 +52,23 @@ const validResponse = {
 
 const asJson = (value) => JSON.stringify(value);
 
+test('quotes the model wrapped around evidence are removed once', () => {
+  const wrapped = structuredClone(validResponse);
+  wrapped.techniques = [
+    { ...validResponse.techniques[0], name: 'Double quoted', evidence: '"Only 3 left in stock."' },
+    { ...validResponse.techniques[0], name: 'Curly quoted', evidence: '\u201COffer ends Friday.\u201D' },
+    { ...validResponse.techniques[0], name: 'Unquoted', evidence: 'Buy now' },
+  ];
+
+  const result = validateAIResponse(asJson(wrapped), { kind: 'text', model: 'test-model' });
+
+  // The UI adds its own quote marks, so keeping the model's produced “"…"”.
+  assert.deepEqual(
+    result.techniques.map((t) => t.evidence),
+    ['Only 3 left in stock.', 'Offer ends Friday.', 'Buy now']
+  );
+});
+
 test('a well-formed response passes through intact', () => {
   const result = validateAIResponse(asJson(validResponse), { kind: 'image', model: 'test-model' });
 

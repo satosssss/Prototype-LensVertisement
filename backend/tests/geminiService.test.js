@@ -194,7 +194,40 @@ test('a 429 becomes AIRateLimitError, not a generic upstream failure', async () 
   assert.equal(received.length, 1);
 });
 
-test('a 503 becomes a "Gemini is busy" error that does not leak internals', async () => {
+test('a daily 429 is distinguished from a per-minute one and says when it resets', async () => {
+  received.length = 0;
+  nextResponse = {
+    status: 429,
+    body: {
+      error: {
+        code: 429,
+        // Verbatim from the live API.
+        message:
+          'Rate limit exceeded for model gemini-3.8-flash (limit: 20 requests per day on Free Tier). ' +
+          'Please retry in 3h7m51s or upgrade your tier at https://ai.dev/rate-limit.',
+        status: 'TOO_MANY_REQUESTS',
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => analyze({ kind: 'text', text: 'test' }),
+    (err) => {
+      assert.ok(err instanceof AIRateLimitError);
+      assert.equal(err.details.reason, 'daily_quota_exceeded');
+      // Telling someone to "wait a minute" when the daily allowance is gone
+      // for three hours is worse than saying nothing.
+      assert.match(err.message, /20 analyses per day/);
+      assert.match(err.message, /3 hours 7 minutes/);
+      assert.doesNotMatch(err.message, /wait about a minute/i);
+      return true;
+    }
+  );
+
+  assert.equal(received.length, 1);
+});
+
+test('a 503 becomes a "Gemini is busy" error, is not retried, and leaks nothing', async () => {
   received.length = 0;
   nextResponse = {
     status: 503,
@@ -218,6 +251,10 @@ test('a 503 becomes a "Gemini is busy" error that does not leak internals', asyn
       return true;
     }
   );
+
+  // Capacity problems last minutes, so a 1.5 s retry is a guaranteed waste of
+  // a free-tier request slot. Fail fast and let the user decide.
+  assert.equal(received.length, 1);
 });
 
 test('a call that overruns the deadline is a 504 timeout and is NOT retried', async () => {

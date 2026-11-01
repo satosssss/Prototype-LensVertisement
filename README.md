@@ -240,10 +240,10 @@ Capability discovery — lists supported and deferred input types.
       "This describes features of the advertisement, not the reaction of any person to it. …",
       "MindLens has no access to the campaign's targeting data, audience measurements, or commercial results …"
     ],
-    "ai": { "provider": "Google Gemini", "model": "gemini-3.8-flash", "latencyMs": 98105, "tier": "free" },
+    "ai": { "provider": "Google Gemini", "model": "gemini-3.6-flash", "latencyMs": 11032, "tier": "free" },
     "cognitiveImpact": null
   },
-  "meta": { "requestId": "…", "durationMs": 98107, "processedAt": "…" }
+  "meta": { "requestId": "…", "durationMs": 11034, "processedAt": "…" }
 }
 ```
 
@@ -281,7 +281,7 @@ All errors share one shape:
 | `FRONTEND_URL` | `http://localhost:5173` | Allowed CORS origin(s), comma-separated |
 | `MAX_UPLOAD_MB` | `5` | Max advertisement image size |
 | `GEMINI_API_KEY` | *(empty)* | Gemini API key — never commit |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | Must be a **free-tier** model |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | Must be a **free-tier** model |
 | `GEMINI_TIMEOUT_MS` | `120000` | Hard deadline for one AI call |
 | `GEMINI_THINKING_LEVEL` | *(empty)* | Optional: `minimal`, `low`, `medium`, `high` (**lowercase only**) |
 | `GEMINI_MAX_OUTPUT_TOKENS` | `4096` | Ceiling on a single response |
@@ -300,16 +300,18 @@ All errors share one shape:
 
 ### Free tier, by design
 
-MindLens uses **`gemini-3.8-flash`**, the current stable Flash model whose input *and* output are listed as "free of charge" on the [Gemini pricing page](https://ai.google.dev/gemini-api/docs/pricing). Nothing in this project requires billing to be enabled.
+MindLens uses **`gemini-3.6-flash`**, whose input *and* output are listed as "free of charge" on the [Gemini pricing page](https://ai.google.dev/gemini-api/docs/pricing). Nothing in this project requires billing to be enabled.
+
+It was chosen over `gemini-3.8-flash` — also free — after measuring both live. On the same text advertisement, `gemini-3.8-flash` took **87–98 seconds** and is capped at **20 requests per day** on the free tier, while `gemini-3.6-flash` took **11 seconds**. Both produced well-evidenced analyses, but 90 seconds per analysis is not demoable and 20 requests per day does not survive a three-person team.
 
 Three properties of the free tier are handled in code rather than assumed away:
 
 | Property | How MindLens handles it |
 |---|---|
-| Per-project rate limits (RPM / RPD, reset midnight Pacific) | A `429` from Google becomes a `429` from our API with a plain-language message. The SDK's own retry loop is disabled per request, so one quota error means one request — not five |
+| Per-project rate limits (RPM / RPD, reset midnight Pacific) | Limits are per **project**, not per key, and are only visible at <https://aistudio.google.com/rate-limit>. Measured: `gemini-3.8-flash` allows **20 requests per day** on the free tier. A `429` becomes a `429` from our API that distinguishes "wait a minute" from "daily allowance spent, resets in 3 h", quoting Google's own figures. The SDK's own retry loop is disabled per request, so one quota error means one request — not five |
 | No cost guarantee for paid-only models | `GEMINI_MODEL` defaults to the free model; switching to a paid model (`gemini-4-argon`) is a deliberate config change, not an accident |
 | Free-tier content may be used to improve Google's products | Documented in `.env.example` and on the About page; the UI asks users not to upload personal data. `store: false` is sent so Google does not retain the interaction for retrieval |
-| Free-tier capacity fluctuates | Measured latency for one text analysis ranged from **87 s to 98 s**, and Google intermittently returns `503 "high demand"`. A `503` gets its own plain-language message ("Gemini is busy right now…") and one retry; a call that overruns `GEMINI_TIMEOUT_MS` returns `504` and is **not** retried, because the budget is already spent |
+| Free-tier capacity fluctuates | Measured on `gemini-3.6-flash`: **11 s** for text, **15 s** for an image. On `gemini-3.8-flash` the same text took 87–98 s and Google intermittently returned `503 "high demand"`. A `503` gets its own plain-language message ("Gemini is busy right now…") and is **not retried** — capacity outages last minutes, so retrying only spends free-tier quota. A call that overruns `GEMINI_TIMEOUT_MS` returns `504` and is not retried either |
 
 ### The trust boundary
 

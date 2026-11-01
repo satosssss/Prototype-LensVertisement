@@ -162,6 +162,31 @@ export function parseModelJson(raw) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Remove one matching pair of quotation marks wrapped around the evidence.
+ *
+ * The UI already renders evidence inside quote marks, so a model answer that
+ * includes its own quotes — `"Only 3 left in stock."` — used to render as
+ * “"Only 3 left in stock."”. Observed live with gemini-3.6-flash.
+ */
+const QUOTE_PAIRS = [
+  ['"', '"'],
+  ['\u201C', '\u201D'],
+  ['\u2018', '\u2019'],
+  ['\u00AB', '\u00BB'],
+  ["'", "'"],
+];
+
+function stripSurroundingQuotes(text) {
+  for (const [open, close] of QUOTE_PAIRS) {
+    if (text.length > 2 && text.startsWith(open) && text.endsWith(close)) {
+      const inner = text.slice(1, -1).trim();
+      if (inner.length > 0) return inner;
+    }
+  }
+  return text;
+}
+
+/**
  * Normalise one technique, or return null if it is not usable.
  * Evidence is mandatory: no evidence, no card.
  */
@@ -169,7 +194,7 @@ function normaliseTechnique(item, index) {
   if (!item || typeof item !== 'object') return null;
 
   const name = cleanText(item.name, LIMITS.techniqueName);
-  const evidence = cleanText(item.evidence, LIMITS.evidence);
+  const evidence = stripSurroundingQuotes(cleanText(item.evidence, LIMITS.evidence));
 
   // The ethical gate. Two independent failures are possible here: the model
   // omitted evidence, or it returned something too short to point at.

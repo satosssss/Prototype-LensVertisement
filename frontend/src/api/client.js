@@ -15,7 +15,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '
 /**
  * How long we wait for the backend before giving up.
  *
- * Gemini on the free tier is slow — a measured text analysis took ~87 s — and
+ * A measured analysis takes ~11 s, but the free tier degrades under load and
  * the backend's own deadline is 120 s. This sits above that so the backend's
  * clearer error wins, but still stops the UI hanging forever if the request
  * dies somewhere in between (proxy, sleeping dyno, dropped connection).

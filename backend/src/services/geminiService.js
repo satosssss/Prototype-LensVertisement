@@ -35,7 +35,7 @@ import {
   AITimeoutError,
 } from '../utils/errorHandler.js';
 
-/** One transient retry only — enough for a blip, not enough to burn quota. */
+/** One retry, and only for a connection that never got an answer. */
 const MAX_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1_500;
 
@@ -98,15 +98,24 @@ const isAbort = (err) => {
 };
 
 /**
- * True for failures worth retrying: upstream 5xx and connection-level errors.
- * A 429 is deliberately NOT retryable — free-tier quotas reset on a schedule,
- * not in 1.5 seconds, so retrying only wastes the user's remaining quota.
- * Neither is a timeout: the call already used its whole budget.
+ * True for failures worth retrying — and only one kind qualifies: status 0,
+ * meaning the request probably never reached Google (socket reset, DNS blip,
+ * dropped connection). That retry is cheap and genuinely might succeed.
+ *
+ * Any HTTP status means Google *answered* and told us what it thinks, so we
+ * believe it instead of arguing:
+ *   • 429 — free-tier quotas reset on a schedule, not in seconds
+ *   • 503 — capacity, and measured live it lasts minutes: every observed
+ *           "attempt 1 failed (503) → retry 1.5 s later" also failed. Retrying
+ *           burned a scarce free-tier request slot and added nothing
+ *   • timeouts — the call already spent its whole budget
+ *
+ * Failing fast is also the honest UI: the user can choose when to try again
+ * rather than watching us spend their quota on guesses.
  */
 const isTransient = (err) => {
   if (isAbort(err)) return false;
-  const status = statusOf(err);
-  return status === 0 || status >= 500;
+  return statusOf(err) === 0;
 };
 
 /**
@@ -130,6 +139,25 @@ function translateError(err) {
   const upstream = messageOf(err);
 
   if (status === 429) {
+    // A 429 means two very different things, and telling the user to "wait a
+    // minute" when the daily allowance is gone is worse than useless.
+    // Google states the limit in the message:
+    //   "Rate limit exceeded for model X (limit: 20 requests per day on Free
+    //    Tier). Please retry in 3h7m51s or upgrade your tier"
+    const dailyLimit = /limit:\s*(\d+)\s+requests?\s+per\s+day/i.exec(upstream);
+    const retryIn = /retry in\s+((?:\d+h)?(?:\d+m)?(?:\d+s)?)/i.exec(upstream);
+    const wait = retryIn?.[1] ? humaniseDuration(retryIn[1]) : '';
+
+    if (dailyLimit) {
+      return new AIRateLimitError(
+        `The free Gemini tier allows ${dailyLimit[1]} analyses per day on ` +
+          `${env.geminiModel}, and that allowance is used up. ` +
+          `It resets at midnight Pacific${wait ? ` (in about ${wait})` : ''}. ` +
+          'Nothing is wrong with your advertisement.',
+        { reason: 'daily_quota_exceeded', upstreamStatus: status, model: env.geminiModel }
+      );
+    }
+
     return new AIRateLimitError(
       'The free Gemini quota for this project has been reached. ' +
         'Wait about a minute and try again. If it keeps happening, check the ' +
@@ -179,6 +207,25 @@ function translateError(err) {
 
 /** Sleep without pulling in a dependency. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Turn Google's compact "3h7m51s" into something a person can read.
+ * @param {string} raw
+ * @returns {string}
+ */
+function humaniseDuration(raw) {
+  const parts = [
+    [Number(/(\d+)h/.exec(raw)?.[1] ?? 0), 'hour'],
+    [Number(/(\d+)m/.exec(raw)?.[1] ?? 0), 'minute'],
+    [Number(/(\d+)s/.exec(raw)?.[1] ?? 0), 'second'],
+  ];
+
+  const spoken = parts
+    .filter(([value]) => value > 0)
+    .map(([value, unit]) => `${value} ${unit}${value === 1 ? '' : 's'}`);
+
+  return spoken.length ? spoken.join(' ') : raw;
+}
 
 /**
  * Build the interaction input for either input type.

@@ -45,15 +45,16 @@ export const env = {
   // Text advertisements are plain strings, so they get a much smaller cap.
   maxTextChars: 20_000,
 
-  // Gemini — free tier only. `gemini-3.8-flash` is the current stable Flash
-  // model and is the one model in the line-up whose input AND output are
-  // listed as "free of charge" on the pricing page. Do not switch this to
-  // `gemini-4-argon` (paid) without confirming the billing implications.
+  // Gemini — free tier only. `gemini-3.6-flash` is "Free of charge" for input
+  // AND output on the pricing page, and was the fastest free model measured
+  // live: 11 s for a text analysis and 15 s for an image, against 87-98 s on
+  // `gemini-3.8-flash`. Do not switch to `gemini-4-argon`: it is paid, with no
+  // free tier at all.
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
 
-  // Hard deadline for one Gemini call. Measured live on gemini-3.8-flash:
-  // a text analysis took 87 s, so a 60 s deadline aborted half the requests.
+  // Hard deadline for one Gemini call. Measured live on the free tier:
+  // a text analysis took 87 s on gemini-3.8-flash, so a 60 s deadline aborted
   // This must stay above the slowest realistic call, but it must exist:
   // without it a stalled request would hold the user's browser open forever.
   geminiTimeoutMs: toInt(process.env.GEMINI_TIMEOUT_MS, 120_000),
